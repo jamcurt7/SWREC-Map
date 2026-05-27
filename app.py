@@ -5,111 +5,132 @@ from math import radians, cos, sin, sqrt, atan2
 
 st.title("SWREC School Travel Planner")
 
-# ✅ Load CSV directly from repo
+# ✅ Load data directly from repo
 df = pd.read_csv("schools_with_coords_full.csv")
 
-    lat_col = "Latitude" if "Latitude" in df.columns else "latitude"
-    lon_col = "Longitude" if "Longitude" in df.columns else "longitude"
+# Clean column names
+df.columns = df.columns.str.strip()
 
-    df[lat_col] = pd.to_numeric(df[lat_col], errors="coerce")
-    df[lon_col] = pd.to_numeric(df[lon_col], errors="coerce")
+# Detect coordinate columns
+lat_col = "Latitude" if "Latitude" in df.columns else "latitude"
+lon_col = "Longitude" if "Longitude" in df.columns else "longitude"
 
-    df_geo = df.dropna(subset=[lat_col, lon_col])
+# Force numeric
+df[lat_col] = pd.to_numeric(df[lat_col], errors="coerce")
+df[lon_col] = pd.to_numeric(df[lon_col], errors="coerce")
 
-    level_col = "School Level (SY 2017-18 onward) [Public School] 2024-25"
-    name_col = "School Name [Public School] 2024-25"
+# Keep only rows with coordinates
+df_geo = df.dropna(subset=[lat_col, lon_col])
 
-    # ✅ Sidebar filters
-    st.sidebar.header("Filters")
+# Column names
+level_col = "School Level (SY 2017-18 onward) [Public School] 2024-25"
+name_col = "School Name [Public School] 2024-25"
 
-    grade_options = ["Elementary", "Middle", "High"]
-    selected_grades = st.sidebar.multiselect(
-        "Select Grade Levels",
-        grade_options,
-        default=grade_options
-    )
+# ✅ SIDEBAR FILTERS
+st.sidebar.header("Filters")
 
-    df_filtered = df_geo[df_geo[level_col].isin(selected_grades)].copy()
+grade_options = ["Elementary", "Middle", "High"]
+selected_grades = st.sidebar.multiselect(
+    "Select Grade Levels",
+    grade_options,
+    default=grade_options
+)
 
-    # ✅ NEW: SCHOOL SELECTOR
-    school_list = df_filtered[name_col].tolist()
+df_filtered = df_geo[df_geo[level_col].isin(selected_grades)].copy()
 
-    selected_schools = st.sidebar.multiselect(
-        "Select Specific Schools (for route planning)",
-        options=school_list
-    )
+# ✅ SCHOOL SELECTOR (INTERACTIVE)
+school_list = sorted(df_filtered[name_col].tolist())
 
-    # ✅ If user selects schools, use those
-    if selected_schools:
-        df_selected = df_filtered[df_filtered[name_col].isin(selected_schools)].copy()
-    else:
-        df_selected = df_filtered.copy()
+selected_schools = st.sidebar.multiselect(
+    "Select Schools for Travel Calculation",
+    options=school_list
+)
 
-    # ✅ Color coding
-    def get_color(level):
-        if level == "Elementary":
-            return [0, 102, 204]
-        elif level == "Middle":
-            return [255, 140, 0]
-        elif level == "High":
-            return [200, 30, 30]
-        else:
-            return [150, 150, 150]
+# If user selects specific schools → use them
+if selected_schools:
+    df_selected = df_filtered[df_filtered[name_col].isin(selected_schools)].copy()
+else:
+    df_selected = df_filtered.copy()
 
-    df_selected["color"] = df_selected[level_col].apply(get_color)
+# ✅ COLOR CODING
+def get_color(level):
+    if level == "Elementary":
+        return [0, 102, 204]   # blue
+    elif level == "Middle":
+        return [255, 140, 0]   # orange
+    elif level == "High":
+        return [200, 30, 30]   # red
+    return [150, 150, 150]
 
-    st.write("### Schools shown:", len(df_selected))
+df_selected["color"] = df_selected[level_col].apply(get_color)
 
-    # ✅ MAP
-    layer = pdk.Layer(
-        "ScatterplotLayer",
-        data=df_selected,
-        get_position=[lon_col, lat_col],
-        get_color="color",
-        get_radius=6000,
-        pickable=True
-    )
+# ✅ MAP
+st.subheader("Map")
 
-    view_state = pdk.ViewState(
-        latitude=32.5,
-        longitude=-107.5,
-        zoom=7
-    )
+layer = pdk.Layer(
+    "ScatterplotLayer",
+    data=df_selected,
+    get_position=[lon_col, lat_col],
+    get_color="color",
+    get_radius=6000,
+    pickable=True,
+)
 
-    st.pydeck_chart(pdk.Deck(
-        layers=[layer],
-        initial_view_state=view_state,
-        tooltip={"text": "{School Name [Public School] 2024-25}"}
-    ))
+view_state = pdk.ViewState(
+    latitude=32.5,
+    longitude=-107.5,
+    zoom=7,
+)
 
-    # ✅ DISTANCE FUNCTION
-    def distance(lat1, lon1, lat2, lon2):
-        R = 3958.8
-        dlat = radians(lat2 - lat1)
-        dlon = radians(lon2 - lon1)
+deck = pdk.Deck(
+    layers=[layer],
+    initial_view_state=view_state,
+    tooltip={"text": "{School Name [Public School] 2024-25}"}
+)
 
-        a = sin(dlat/2)**2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon/2)**2
-        c = 2 * atan2(sqrt(a), sqrt(1 - a))
+st.pydeck_chart(deck)
 
-        return R * c
+# ✅ LEGEND
+st.markdown("""
+**Legend**
+- 🔵 Elementary  
+- 🟠 Middle  
+- 🔴 High  
+""")
 
-    # ✅ TRAVEL CALC FOR SELECTED
-    st.write("### Travel Estimate")
+# ✅ DISTANCE FUNCTION
+def distance(lat1, lon1, lat2, lon2):
+    R = 3958.8
+    dlat = radians(lat2 - lat1)
+    dlon = radians(lon2 - lon1)
 
-    if len(df_selected) > 1:
-        total_distance = 0
+    a = sin(dlat/2)**2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon/2)**2
+    c = 2 * atan2(sqrt(a), sqrt(1 - a))
 
-        for i in range(len(df_selected) - 1):
-            lat1 = df_selected.iloc[i][lat_col]
-            lon1 = df_selected.iloc[i][lon_col]
-            lat2 = df_selected.iloc[i+1][lat_col]
-            lon2 = df_selected.iloc[i+1][lon_col]
+    return R * c
 
-            total_distance += distance(lat1, lon1, lat2, lon2)
+# ✅ TRAVEL CALCULATION
+st.subheader("Travel Estimate")
 
-        travel_hours = (total_distance * 1.4) / 60
+if len(df_selected) > 1:
+    total_distance = 0
 
-        st.write(f"Estimated distance: {total_distance:.1f} miles")
-        st.write(f"Estimated travel time: {travel_hours:.1f} hours")
-    else:
-        st.write("Select at least 2 schools to calculate travel.")
+    for i in range(len(df_selected) - 1):
+        lat1 = df_selected.iloc[i][lat_col]
+        lon1 = df_selected.iloc[i][lon_col]
+        lat2 = df_selected.iloc[i+1][lat_col]
+        lon2 = df_selected.iloc[i+1][lon_col]
+
+        total_distance += distance(lat1, lon1, lat2, lon2)
+
+    travel_hours = (total_distance * 1.4) / 60
+
+    st.write(f"**Estimated distance:** {total_distance:.1f} miles")
+    st.write(f"**Estimated travel time:** {travel_hours:.1f} hours")
+
+    # ✅ SIMPLE PLANNING INSIGHT
+    days = travel_hours / 6  # assume ~6 hrs driving/day
+    st.write(f"**Estimated travel days:** {days:.1f} days")
+
+else:
+    st.write("Select at least 2 schools to calculate travel.")
