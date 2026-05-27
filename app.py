@@ -171,4 +171,3 @@ if len(df_route) > 1:
 
 else:
     st.write("Select at least 2 schools to calculate travel.")
-``
