@@ -5,11 +5,10 @@ from math import radians, cos, sin, sqrt, atan2
 
 st.title("SWREC School Travel Planner")
 
-uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"])
 
-if uploaded_file:
-    df = pd.read_csv(uploaded_file)
-    df.columns = df.columns.str.strip()
+# ✅ Load CSV directly from repo
+df = pd.read_csv("schools_with_coords_full.csv")
+
 
     lat_col = "Latitude" if "Latitude" in df.columns else "latitude"
     lon_col = "Longitude" if "Longitude" in df.columns else "longitude"
