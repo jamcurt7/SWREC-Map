@@ -5,22 +5,22 @@ from math import radians, cos, sin, sqrt, atan2
 
 st.title("SWREC School Travel Planner")
 
-# ✅ LOAD FULL COVERAGE DATA
+# ✅ LOAD DATA
 df = pd.read_csv("schools_with_coords_FULL_COVERAGE.csv")
 df.columns = df.columns.str.strip()
 
-# ✅ DETECT COORDINATES
+# ✅ COLUMN DETECTION
 lat_col = "Latitude" if "Latitude" in df.columns else "latitude"
 lon_col = "Longitude" if "Longitude" in df.columns else "longitude"
 
 df[lat_col] = pd.to_numeric(df[lat_col], errors="coerce")
 df[lon_col] = pd.to_numeric(df[lon_col], errors="coerce")
 
-# ✅ COLUMNS
+# ✅ REQUIRED COLUMN NAMES
 level_col = "School Level (SY 2017-18 onward) [Public School] 2024-25"
 name_col = "School Name [Public School] 2024-25"
 
-# ✅ SIDEBAR FILTERS
+# ✅ SIDEBAR FILTER
 st.sidebar.header("Filters")
 
 grades = ["Elementary", "Middle", "High"]
@@ -81,7 +81,10 @@ def optimize_route(df):
 
     while not remaining.empty:
         distances = remaining.apply(
-            lambda row: distance(current[lat_col], current[lon_col], row[lat_col], row[lon_col]),
+            lambda row: distance(
+                current[lat_col], current[lon_col],
+                row[lat_col], row[lon_col]
+            ),
             axis=1
         )
 
@@ -94,12 +97,11 @@ def optimize_route(df):
 
     return pd.DataFrame(ordered)
 
-# ✅ APPLY ROUTE LOGIC
+# ✅ APPLY ROUTE
 df_route = optimize_route(df_selected)
 
-# ✅ BUILD ROUTE LINES (VERY IMPORTANT FIX)
+# ✅ BUILD ROUTE LINES
 line_data = []
-
 for i in range(len(df_route) - 1):
     line_data.append({
         "source": [df_route.iloc[i][lon_col], df_route.iloc[i][lat_col]],
@@ -121,11 +123,11 @@ line_layer = pdk.Layer(
     data=line_data,
     get_source_position="source",
     get_target_position="target",
-    get_color=[255, 215, 0],  # bright yellow
-    get_width=6,
+    get_color=[255, 200, 0],  # bright yellow
+    get_width=8,
 )
 
-# ✅ DYNAMIC MAP CENTER
+# ✅ DYNAMIC CENTER
 center_lat = df_route[lat_col].mean() if not df_route.empty else 32.5
 center_lon = df_route[lon_col].mean() if not df_route.empty else -107.5
 
@@ -137,12 +139,15 @@ view_state = pdk.ViewState(
 
 st.subheader("Map")
 
-st.pydeck_chart(pdk.Deck(
+# ✅ ✅ FIXED BASEMAP (THIS SOLVES YOUR BLACK MAP ISSUE)
+deck = pdk.Deck(
     layers=[line_layer, scatter_layer],
     initial_view_state=view_state,
-    map_style="mapbox://styles/mapbox/light-v9",
+    map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
     tooltip={"text": "{School Name [Public School] 2024-25}"}
-))
+)
+
+st.pydeck_chart(deck)
 
 # ✅ LEGEND
 st.markdown("""
@@ -167,15 +172,12 @@ if len(df_route) > 1:
             df_route.iloc[i+1][lon_col],
         )
 
-    # ✅ ROAD ADJUSTMENT (real-world approximation)
+    # ✅ ROAD ADJUSTMENT
     ROAD_FACTOR = 1.6
     driving_distance = base_distance * ROAD_FACTOR
 
-    # ✅ REALISTIC SPEED (rural southwestern driving)
     avg_speed = 50
     travel_hours = driving_distance / avg_speed
-
-    # ✅ WORKDAY ASSUMPTION
     travel_days = travel_hours / 6
 
     st.write(f"Optimized route distance: {base_distance:.1f} miles")
