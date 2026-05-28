@@ -1,28 +1,22 @@
 import streamlit as st
 import pandas as pd
 import pydeck as pdk
-from math import radians, cos, sin, sqrt, atan2
 import requests
 import polyline
+from math import radians, cos, sin, sqrt, atan2
 
-st.title("SWREC School Travel Planner")
+st.title("SWREC School Travel Planner (Real Routes)")
 
 # ✅ LOAD DATA
 df = pd.read_csv("schools_with_coords_FULL_COVERAGE.csv")
 df.columns = df.columns.str.strip()
 
-# ✅ COLUMN DETECTION
-lat_col = "Latitude" if "Latitude" in df.columns else "latitude"
-lon_col = "Longitude" if "Longitude" in df.columns else "longitude"
-
-df[lat_col] = pd.to_numeric(df[lat_col], errors="coerce")
-df[lon_col] = pd.to_numeric(df[lon_col], errors="coerce")
-
-# ✅ REQUIRED COLUMN NAMES
+lat_col = "Latitude"
+lon_col = "Longitude"
 level_col = "School Level (SY 2017-18 onward) [Public School] 2024-25"
 name_col = "School Name [Public School] 2024-25"
 
-# ✅ SIDEBAR FILTER
+# ✅ SIDEBAR
 st.sidebar.header("Filters")
 
 grades = ["Elementary", "Middle", "High"]
@@ -47,19 +41,17 @@ if selected_schools:
 else:
     df_selected = df_filtered.copy()
 
-# ✅ COLOR CODING
-def get_color(level):
-    if level == "Elementary":
-        return [0, 102, 204]   # blue
-    elif level == "Middle":
-        return [255, 140, 0]   # orange
-    elif level == "High":
-        return [200, 30, 30]   # red
-    return [150, 150, 150]
+# ✅ LIMIT ROUTE SIZE (prevents messy routes)
+max_stops = st.sidebar.slider(
+    "Max Schools in Route",
+    min_value=2,
+    max_value=15,
+    value=6
+)
 
-df_selected["color"] = df_selected[level_col].apply(get_color)
+df_selected = df_selected.head(max_stops)
 
-# ✅ DISTANCE FUNCTION
+# ✅ DISTANCE FUNCTION (for optimizer)
 def distance(lat1, lon1, lat2, lon2):
     R = 3958.8
     dlat = radians(lat2 - lat1)
@@ -70,7 +62,7 @@ def distance(lat1, lon1, lat2, lon2):
 
     return R * c
 
-# ✅ ROUTE OPTIMIZATION
+# ✅ ROUTE OPTIMIZATION (simple nearest neighbor)
 def optimize_route(df):
     df = df.reset_index(drop=True)
 
@@ -84,8 +76,10 @@ def optimize_route(df):
     while not remaining.empty:
         distances = remaining.apply(
             lambda row: distance(
-                current[lat_col], current[lon_col],
-                row[lat_col], row[lon_col]
+                current[lat_col],
+                current[lon_col],
+                row[lat_col],
+                row[lon_col]
             ),
             axis=1
         )
@@ -99,19 +93,39 @@ def optimize_route(df):
 
     return pd.DataFrame(ordered)
 
-# ✅ APPLY ROUTE
-df_route = optimize_route(df_selected)
+# ✅ APPLY ROUTE ORDER
+df_route = optimize_route(df_selected).reset_index(drop=True)
 
-# ✅ BUILD COORDINATES FOR API
+# ✅ ADD ORDER COLUMN
+df_route["order"] = range(1, len(df_route) + 1)
+
+# ✅ COLOR (start = green)
+def get_color(index, level):
+    if index == 0:
+        return [0, 255, 0]  # START = GREEN
+    if level == "Elementary":
+        return [0, 102, 204]
+    elif level == "Middle":
+        return [255, 140, 0]
+    elif level == "High":
+        return [200, 30, 30]
+    return [150, 150, 150]
+
+df_route["color"] = [
+    get_color(i, row[level_col])
+    for i, row in df_route.iterrows()
+]
+
+# ✅ BUILD COORDS FOR API
 coords = [
     [row[lon_col], row[lat_col]]
     for _, row in df_route.iterrows()
 ]
 
-# ✅ YOUR API KEY (PASTE HERE)
+# ✅ ADD YOUR API KEY HERE
 API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjA0ODJmZGFkYmI2NzQxNzhiYTcyNWU5YjJmZTg0MDI4IiwiaCI6Im11cm11cjY0In0="
 
-# ✅ FUNCTION TO CALL OPENROUTESERVICE
+# ✅ ROUTING FUNCTION
 def get_route(coords):
     url = "https://api.openrouteservice.org/v2/directions/driving-car"
 
@@ -120,14 +134,12 @@ def get_route(coords):
         "Content-Type": "application/json"
     }
 
-    body = {
-        "coordinates": coords
-    }
+    body = {"coordinates": coords}
 
     response = requests.post(url, json=body, headers=headers)
 
     if response.status_code != 200:
-        st.error("Routing API error")
+        st.error(f"Routing error: {response.status_code}")
         return None, None, None
 
     data = response.json()
@@ -139,10 +151,10 @@ def get_route(coords):
 
     return distance_miles, duration_hours, geometry
 
-# ✅ CALL API
+# ✅ GET ROUTE
+route_path = []
 distance_miles = None
 duration_hours = None
-route_path = []
 
 if len(coords) > 1:
     distance_miles, duration_hours, geometry = get_route(coords)
@@ -151,7 +163,7 @@ if len(coords) > 1:
         decoded = polyline.decode(geometry)
         route_path = [[lon, lat] for lat, lon in decoded]
 
-# ✅ USE REAL ROUTE FROM API
+# ✅ MAP LAYERS
 layers = []
 
 scatter_layer = pdk.Layer(
@@ -159,8 +171,8 @@ scatter_layer = pdk.Layer(
     data=df_route,
     get_position=[lon_col, lat_col],
     get_color="color",
-    get_radius=4000,
-    pickable=True,
+    get_radius=5000,
+    pickable=True
 )
 
 layers.append(scatter_layer)
@@ -172,22 +184,13 @@ if route_path:
         get_path="path",
         get_color=[255, 200, 0],
         width_scale=5,
-        width_min_pixels=3,
+        width_min_pixels=3
     )
     layers.append(route_layer)
-# ✅ MAP LAYERS
-scatter_layer = pdk.Layer(
-    "ScatterplotLayer",
-    data=df_route,
-    get_position=[lon_col, lat_col],
-    get_color="color",
-    get_radius=4000,
-    pickable=True,
-)
 
-# ✅ DYNAMIC CENTER
-center_lat = df_route[lat_col].mean() if not df_route.empty else 32.5
-center_lon = df_route[lon_col].mean() if not df_route.empty else -107.5
+# ✅ VIEW STATE
+center_lat = df_route[lat_col].mean()
+center_lon = df_route[lon_col].mean()
 
 view_state = pdk.ViewState(
     latitude=center_lat,
@@ -197,51 +200,27 @@ view_state = pdk.ViewState(
 
 st.subheader("Map")
 
-# ✅ ✅ FIXED BASEMAP (THIS SOLVES YOUR BLACK MAP ISSUE)
 deck = pdk.Deck(
     layers=layers,
     initial_view_state=view_state,
     map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
-    tooltip={"text": "{School Name [Public School] 2024-25}"}
+    tooltip={"text": "{order}. {School Name [Public School] 2024-25}"}
 )
 
 st.pydeck_chart(deck)
 
-# ✅ LEGEND
-st.markdown("""
-**Legend**
-- 🔵 Elementary  
-- 🟠 Middle  
-- 🔴 High  
-- 🟡 Yellow line = optimized travel route  
-""")
+# ✅ ROUTE LIST (CRITICAL FOR USABILITY)
+st.subheader("Route Order")
 
-# ✅ TRAVEL CALCULATION
-st.subheader("Travel Estimate")
+for i, row in df_route.iterrows():
+    st.write(f"{i+1}. {row[name_col]}")
 
-if len(df_route) > 1:
-    base_distance = 0
+# ✅ TRAVEL SUMMARY
+st.subheader("Travel Summary")
 
-    for i in range(len(df_route) - 1):
-        base_distance += distance(
-            df_route.iloc[i][lat_col],
-            df_route.iloc[i][lon_col],
-            df_route.iloc[i+1][lat_col],
-            df_route.iloc[i+1][lon_col],
-        )
-
-    # ✅ ROAD ADJUSTMENT
-    ROAD_FACTOR = 1.6
-    driving_distance = base_distance * ROAD_FACTOR
-
-    avg_speed = 50
-    travel_hours = driving_distance / avg_speed
-    travel_days = travel_hours / 6
-
-    st.write(f"Optimized route distance: {base_distance:.1f} miles")
-    st.write(f"Estimated driving distance: {driving_distance:.1f} miles")
-    st.write(f"Estimated travel time: {travel_hours:.1f} hours")
-    st.write(f"Estimated travel days: {travel_days:.1f} days")
-
+if distance_miles:
+    st.write(f"Driving distance: {distance_miles:.1f} miles")
+    st.write(f"Driving time: {duration_hours:.1f} hours")
+    st.write(f"Estimated days (6hr/day): {duration_hours/6:.1f}")
 else:
-    st.write("Select at least 2 schools to calculate travel.")
+    st.write("Select at least 2 schools.")
