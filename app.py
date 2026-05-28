@@ -74,16 +74,21 @@ API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjA0ODJmZGFkYmI2N
 
 # ✅ ORS OPTIMIZATION (BEST ROUTE ORDER)
 def optimize_route_ors(coords):
-    url = "https://api.openrouteservice.org/v2/optimization"
+    url = "https://api.openrouteservice.org/optimization"
+
+    jobs = []
+    for i, coord in enumerate(coords):
+        jobs.append({
+            "id": i,
+            "location": coord
+        })
 
     body = {
-        "jobs": [
-            {"id": i, "location": coord}
-            for i, coord in enumerate(coords)
-        ],
+        "jobs": jobs,
         "vehicles": [{
             "id": 1,
-            "start": coords[0] if selected_hub != "None" else coords[0]
+            "start": coords[0],   # start at first point (hub)
+            "end": coords[0]      # return to hub (important!)
         }]
     }
 
@@ -95,20 +100,20 @@ def optimize_route_ors(coords):
     response = requests.post(url, json=body, headers=headers)
 
     if response.status_code != 200:
-        st.error("Optimization API error")
+        st.error(f"Optimization API error: {response.text}")
         return list(range(len(coords)))
 
     data = response.json()
 
     try:
-        route = data["routes"][0]["steps"]
-        ordered_indices = [step["job"] for step in route if "job" in step]
-        return ordered_indices
+        steps = data["routes"][0]["steps"]
+        ordered = [step["job"] for step in steps if "job" in step]
+        return ordered
     except:
         return list(range(len(coords)))
 
 # ✅ APPLY TRUE OPTIMIZATION
-if len(coords) > 1 and len(coords) <= 50:
+if len(coords) > 1 and len(coords) <= 40:
     order = optimize_route_ors(coords)
     df_route = df_selected.iloc[order].reset_index(drop=True)
 else:
