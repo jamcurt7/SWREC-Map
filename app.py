@@ -185,15 +185,6 @@ scatter_layer = pdk.Layer(
     pickable=True,
 )
 
-line_layer = pdk.Layer(
-    "LineLayer",
-    data=line_data,
-    get_source_position="source",
-    get_target_position="target",
-    get_color=[255, 200, 0],  # bright yellow
-    get_width=8,
-)
-
 # ✅ DYNAMIC CENTER
 center_lat = df_route[lat_col].mean() if not df_route.empty else 32.5
 center_lon = df_route[lon_col].mean() if not df_route.empty else -107.5
