@@ -6,7 +6,9 @@ import polyline
 
 st.title("SWREC School Travel Planner (Optimized Routes)")
 
+# ================================
 # ✅ LOAD DATA
+# ================================
 df = pd.read_csv("schools_with_coords_FULL_COVERAGE.csv")
 df.columns = df.columns.str.strip()
 
@@ -15,10 +17,12 @@ lon_col = "Longitude"
 level_col = "School Level (SY 2017-18 onward) [Public School] 2024-25"
 name_col = "School Name [Public School] 2024-25"
 
-# ✅ SIDEBAR
+# ================================
+# ✅ SIDEBAR FILTERS
+# ================================
+
 st.sidebar.header("Filters")
 
-# Grade filter
 grades = ["Elementary", "Middle", "High"]
 selected_grades = st.sidebar.multiselect(
     "Select Grade Levels",
@@ -28,7 +32,6 @@ selected_grades = st.sidebar.multiselect(
 
 df_filtered = df[df[level_col].isin(selected_grades)].copy()
 
-# ✅ SCHOOL SELECTION
 school_names = sorted(df_filtered[name_col].tolist())
 
 selected_schools = st.sidebar.multiselect(
@@ -41,7 +44,9 @@ if selected_schools:
 else:
     df_selected = df_filtered.copy()
 
-# ✅ HUB OPTIONS
+# ================================
+# ✅ HUB SELECTION
+# ================================
 hubs = {
     "None": None,
     "Albuquerque": [35.0844, -106.6504],
@@ -55,24 +60,30 @@ selected_hub = st.sidebar.selectbox("Starting Hub", list(hubs.keys()))
 # ✅ Add hub as first point
 if selected_hub != "None":
     hub_lat, hub_lon = hubs[selected_hub]
+
     hub_row = pd.DataFrame([{
         lat_col: hub_lat,
         lon_col: hub_lon,
-        name_col: selected_hub,
+        name_col: selected_hub + " (Start)",
         level_col: "Hub"
     }])
+
     df_selected = pd.concat([hub_row, df_selected]).reset_index(drop=True)
 
-# ✅ BUILD COORDS
+# ================================
+# ✅ BUILD COORDINATES
+# ================================
 coords = [
     [row[lon_col], row[lat_col]]
     for _, row in df_selected.iterrows()
 ]
 
-# ✅ API KEY
+# ✅ ADD YOUR API KEY HERE
 API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjA0ODJmZGFkYmI2NzQxNzhiYTcyNWU5YjJmZTg0MDI4IiwiaCI6Im11cm11cjY0In0="
 
+# ================================
 # ✅ ORS OPTIMIZATION (BEST ROUTE ORDER)
+# ================================
 def optimize_route_ors(coords):
     url = "https://api.openrouteservice.org/optimization"
 
@@ -87,8 +98,8 @@ def optimize_route_ors(coords):
         "jobs": jobs,
         "vehicles": [{
             "id": 1,
-            "start": coords[0],   # start at first point (hub)
-            "end": coords[0]      # return to hub (important!)
+            "start": coords[0],
+            "end": coords[0]  # loop back to hub
         }]
     }
 
@@ -101,7 +112,7 @@ def optimize_route_ors(coords):
 
     if response.status_code != 200:
         st.error(f"Optimization API error: {response.text}")
-        return list(range(len(coords)))
+        return list(range(len(coords)))  # fallback
 
     data = response.json()
 
@@ -112,17 +123,21 @@ def optimize_route_ors(coords):
     except:
         return list(range(len(coords)))
 
-# ✅ APPLY TRUE OPTIMIZATION
+# ================================
+# ✅ APPLY OPTIMIZATION
+# ================================
 if len(coords) > 1 and len(coords) <= 40:
     order = optimize_route_ors(coords)
     df_route = df_selected.iloc[order].reset_index(drop=True)
 else:
-    st.warning("Too many schools selected (max ~50 for optimization). Using simple order.")
+    st.warning("Too many schools selected (max ~40 for optimization).")
     df_route = df_selected.copy()
 
 df_route["order"] = range(1, len(df_route) + 1)
 
-# ✅ BUILD ROUTE LINE
+# ================================
+# ✅ GET REAL ROAD ROUTE
+# ================================
 def get_route(coords):
     url = "https://api.openrouteservice.org/v2/directions/driving-car"
 
@@ -145,17 +160,19 @@ def get_route(coords):
     decoded = polyline.decode(geometry)
     return [[lon, lat] for lat, lon in decoded]
 
-coords_optimized = [
+coords_final = [
     [row[lon_col], row[lat_col]]
     for _, row in df_route.iterrows()
 ]
 
-route_path = get_route(coords_optimized)
+route_path = get_route(coords_final)
 
-# ✅ COLOR (start = green)
+# ================================
+# ✅ COLOR CODING
+# ================================
 def get_color(i, level):
     if i == 0:
-        return [0, 255, 0]
+        return [0, 255, 0]  # start = green
     if level == "Elementary":
         return [0, 102, 204]
     if level == "Middle":
@@ -169,8 +186,10 @@ df_route["color"] = [
     for i, row in df_route.iterrows()
 ]
 
-# ✅ MAP
-scatter = pdk.Layer(
+# ================================
+# ✅ MAP LAYERS
+# ================================
+scatter_layer = pdk.Layer(
     "ScatterplotLayer",
     data=df_route,
     get_position=[lon_col, lat_col],
@@ -179,7 +198,7 @@ scatter = pdk.Layer(
     pickable=True
 )
 
-layers = [scatter]
+layers = [scatter_layer]
 
 if route_path:
     layers.append(
@@ -193,11 +212,16 @@ if route_path:
         )
     )
 
+# ================================
+# ✅ MAP VIEW
+# ================================
 view_state = pdk.ViewState(
     latitude=df_route[lat_col].mean(),
     longitude=df_route[lon_col].mean(),
     zoom=6
 )
+
+st.subheader("Map")
 
 deck = pdk.Deck(
     layers=layers,
@@ -208,7 +232,9 @@ deck = pdk.Deck(
 
 st.pydeck_chart(deck)
 
-# ✅ ROUTE ORDER LIST
+# ================================
+# ✅ ROUTE ORDER DISPLAY
+# ================================
 st.subheader("Route Order")
 
 for i, row in df_route.iterrows():
