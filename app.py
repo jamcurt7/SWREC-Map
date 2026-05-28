@@ -4,11 +4,13 @@ import pydeck as pdk
 import requests
 import polyline
 
-st.title("SWREC Travel Planner (Multi-Day + Coaches)")
+st.set_page_config(layout="wide")
 
-# =========================
+st.title("SWREC Travel Planner")
+
+# ====================================
 # LOAD DATA
-# =========================
+# ====================================
 df = pd.read_csv("schools_with_coords_FULL_COVERAGE.csv")
 df.columns = df.columns.str.strip()
 
@@ -17,30 +19,37 @@ lon_col = "Longitude"
 level_col = "School Level (SY 2017-18 onward) [Public School] 2024-25"
 name_col = "School Name [Public School] 2024-25"
 
-# =========================
-# FILTERS
-# =========================
-st.sidebar.header("Filters")
+# ====================================
+# SIDEBAR (STRUCTURED FLOW)
+# ====================================
+st.sidebar.header("1. School Selection")
 
 grades = ["Elementary", "Middle", "High"]
 selected_grades = st.sidebar.multiselect(
-    "Select Grade Levels", grades, default=grades
+    "Grade Levels",
+    grades,
+    default=grades
 )
 
 df_filtered = df[df[level_col].isin(selected_grades)]
 
 schools = sorted(df_filtered[name_col].tolist())
 
-selected_schools = st.sidebar.multiselect("Select Schools", schools)
+selected_schools = st.sidebar.multiselect(
+    "Select Schools",
+    schools
+)
 
 if selected_schools:
     df_selected = df_filtered[df_filtered[name_col].isin(selected_schools)].copy()
 else:
     df_selected = df_filtered.copy()
 
-# =========================
+# ====================================
 # HUB
-# =========================
+# ====================================
+st.sidebar.header("2. Starting Location")
+
 hubs = {
     "None": None,
     "Albuquerque": [35.0844, -106.6504],
@@ -56,29 +65,34 @@ if selected_hub != "None":
     hub_row = pd.DataFrame([{
         lat_col: lat,
         lon_col: lon,
-        name_col: selected_hub + " (Start)",
+        name_col: selected_hub + " (START)",
         level_col: "Hub"
     }])
     df_selected = pd.concat([hub_row, df_selected]).reset_index(drop=True)
 
-# =========================
+# ====================================
 # COACHES
-# =========================
+# ====================================
+st.sidebar.header("3. Staffing Plan")
+
 num_coaches = st.sidebar.slider("Number of Coaches", 1, 4, 1)
 
-# =========================
-# COORDS
-# =========================
-coords = [[row[lon_col], row[lat_col]] for _, row in df_selected.iterrows()]
+# ====================================
+# BUILD COORDS
+# ====================================
+coords = [
+    [row[lon_col], row[lat_col]]
+    for _, row in df_selected.iterrows()
+]
 
-# =========================
+# ====================================
 # API KEY
-# =========================
+# ====================================
 API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjA0ODJmZGFkYmI2NzQxNzhiYTcyNWU5YjJmZTg0MDI4IiwiaCI6Im11cm11cjY0In0="
 
-# =========================
-# OPTIMIZATION
-# =========================
+# ====================================
+# ORS OPTIMIZATION
+# ====================================
 def optimize(coords):
     url = "https://api.openrouteservice.org/optimization"
 
@@ -93,7 +107,10 @@ def optimize(coords):
         }]
     }
 
-    headers = {"Authorization": API_KEY, "Content-Type": "application/json"}
+    headers = {
+        "Authorization": API_KEY,
+        "Content-Type": "application/json"
+    }
 
     r = requests.post(url, json=body, headers=headers)
 
@@ -104,25 +121,28 @@ def optimize(coords):
     steps = r.json()["routes"][0]["steps"]
     return [s["job"] for s in steps if "job" in s]
 
-# =========================
-# ROUTE ORDER
-# =========================
+# ====================================
+# APPLY OPTIMIZATION
+# ====================================
 if len(coords) <= 40:
     order = optimize(coords)
     df_route = df_selected.iloc[order].reset_index(drop=True)
 else:
-    st.warning("Too many locations (max ~40)")
+    st.warning("Too many locations (max ~40 for optimization)")
     df_route = df_selected.copy()
 
 df_route["order"] = range(1, len(df_route) + 1)
 
-# =========================
-# GET ROAD PATH
-# =========================
+# ====================================
+# GET ROUTE PATH
+# ====================================
 def get_route(coords):
     url = "https://api.openrouteservice.org/v2/directions/driving-car"
 
-    headers = {"Authorization": API_KEY, "Content-Type": "application/json"}
+    headers = {
+        "Authorization": API_KEY,
+        "Content-Type": "application/json"
+    }
 
     body = {"coordinates": coords}
 
@@ -141,38 +161,54 @@ def get_route(coords):
 
     return path, dist, dur
 
-coords_final = [[row[lon_col], row[lat_col]] for _, row in df_route.iterrows()]
+coords_final = [
+    [row[lon_col], row[lat_col]]
+    for _, row in df_route.iterrows()
+]
+
 route_path, total_dist, total_time = get_route(coords_final)
 
-# =========================
-# MULTI-DAY + COACH SPLIT
-# =========================
-st.subheader("Planning Breakdown")
-
+# ====================================
+# COACH SPLITTING
+# ====================================
 schools_per_coach = max(1, len(df_route) // num_coaches)
 
 coach_routes = []
+colors = [
+    [255, 200, 0],
+    [0, 200, 255],
+    [0, 255, 100],
+    [255, 100, 200]
+]
+
 for i in range(num_coaches):
     start = i * schools_per_coach
     end = (i + 1) * schools_per_coach
+
     segment = df_route.iloc[start:end]
 
     if len(segment) < 2:
         continue
 
-    coords_seg = [[row[lon_col], row[lat_col]] for _, row in segment.iterrows()]
-    _, dist, time = get_route(coords_seg)
+    coords_seg = [
+        [row[lon_col], row[lat_col]]
+        for _, row in segment.iterrows()
+    ]
+
+    path, dist, time = get_route(coords_seg)
 
     coach_routes.append({
         "coach": i + 1,
         "schools": segment[name_col].tolist(),
         "distance": dist,
-        "time": time
+        "time": time,
+        "path": path,
+        "color": colors[i]
     })
 
-# =========================
-# MAP COLORS
-# =========================
+# ====================================
+# COLORS FOR MAP POINTS
+# ====================================
 def get_color(i, level):
     if i == 0:
         return [0, 255, 0]
@@ -185,64 +221,87 @@ def get_color(i, level):
     return [150, 150, 150]
 
 df_route["color"] = [
-    get_color(i, row[level_col]) for i, row in df_route.iterrows()
+    get_color(i, row[level_col])
+    for i, row in df_route.iterrows()
 ]
 
-# =========================
-# MAP
-# =========================
-scatter = pdk.Layer(
-    "ScatterplotLayer",
-    data=df_route,
-    get_position=[lon_col, lat_col],
-    get_color="color",
-    get_radius=5000,
-    pickable=True,
-)
+# ====================================
+# LAYOUT
+# ====================================
+col1, col2 = st.columns([2, 1])
 
-layers = [scatter]
+# ========== MAP ==========
+with col1:
+    st.subheader("Route Map")
 
-if route_path:
-    layers.append(
-        pdk.Layer(
-            "PathLayer",
-            data=[{"path": route_path}],
-            get_path="path",
-            get_color=[255, 200, 0],
-            width_min_pixels=3
-        )
+    scatter = pdk.Layer(
+        "ScatterplotLayer",
+        data=df_route,
+        get_position=[lon_col, lat_col],
+        get_color="color",
+        get_radius=7000,
+        pickable=True
     )
 
-view = pdk.ViewState(
-    latitude=df_route[lat_col].mean(),
-    longitude=df_route[lon_col].mean(),
-    zoom=6
-)
+    layers = [scatter]
 
-st.pydeck_chart(pdk.Deck(
-    layers=layers,
-    initial_view_state=view,
-    map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
-    tooltip={"text": "{order}. {School Name [Public School] 2024-25}"}
-))
+    # draw each coach route
+    for c in coach_routes:
+        if c["path"]:
+            layers.append(
+                pdk.Layer(
+                    "PathLayer",
+                    data=[{"path": c["path"]}],
+                    get_path="path",
+                    get_color=c["color"],
+                    width_min_pixels=6
+                )
+            )
 
-# =========================
-# OUTPUT
-# =========================
-st.subheader("Full Route")
-for i, row in df_route.iterrows():
-    st.write(f"{i+1}. {row[name_col]}")
+    view = pdk.ViewState(
+        latitude=df_route[lat_col].mean(),
+        longitude=df_route[lon_col].mean(),
+        zoom=6
+    )
 
-st.subheader("Total Travel")
-st.write(f"Distance: {total_dist:.1f} miles")
-st.write(f"Time: {total_time:.1f} hours")
+    deck = pdk.Deck(
+        layers=layers,
+        initial_view_state=view,
+        map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+        tooltip={"text": "{order}. {School Name [Public School] 2024-25}"}
+    )
 
-st.subheader("Coach Breakdown")
+    st.pydeck_chart(deck)
 
-for c in coach_routes:
-    st.write(f"--- Coach {c['coach']} ---")
-    st.write(f"Stops: {len(c['schools'])}")
-    st.write(f"Distance: {c['distance']:.1f} mi")
-    st.write(f"Time: {c['time']:.1f} hrs")
-    for s in c["schools"]:
-        st.write(f"• {s}")
+# ========== SIDEPANEL DISPLAY ==========
+with col2:
+
+    st.subheader("Summary")
+
+    st.metric("Total Distance", f"{total_dist:.0f} mi")
+    st.metric("Total Time", f"{total_time:.1f} hrs")
+    st.metric("Coaches", num_coaches)
+
+    st.divider()
+
+    st.subheader("Route Order")
+
+    for i, row in df_route.iterrows():
+        if i == 0:
+            st.markdown(f"🟢 **START: {row[name_col]}**")
+        else:
+            st.write(f"{i+1}. {row[name_col]}")
+
+    st.divider()
+
+    st.subheader("Coach Plans")
+
+    for c in coach_routes:
+        with st.expander(f"Coach {c['coach']}"):
+
+            st.write(f"Distance: {c['distance']:.1f} miles")
+            st.write(f"Time: {c['time']:.1f} hours")
+            st.write("Stops:")
+
+            for s in c["schools"]:
+                st.write(f"• {s}")
